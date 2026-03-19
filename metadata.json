@@ -1,0 +1,5 @@
+{
+  "name": "Cosmo",
+  "description": "Un sistema solar interactivo con animaciones y datos de los planetas.",
+  "requestFramePermissions": []
+}
