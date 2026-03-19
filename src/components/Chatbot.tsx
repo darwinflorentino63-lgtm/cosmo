@@ -3,11 +3,9 @@ import { MessageCircle, X, Send, Bot, Sparkles, Rocket, History, ArrowLeft, Plus
 import { motion, AnimatePresence } from 'motion/react';
 import { GoogleGenAI } from '@google/genai';
 import ReactMarkdown from 'react-markdown';
-import { auth, db } from '../firebase';
-import { collection, addDoc, query, orderBy, onSnapshot, serverTimestamp, deleteDoc, doc, where, getDocs } from 'firebase/firestore';
-import { onAuthStateChanged, User } from 'firebase/auth';
+import { localDb, LocalUser } from '../localDb';
 
-export function Chatbot() {
+export function Chatbot({ hideOnMobile }: { hideOnMobile?: boolean }) {
   const [isOpen, setIsOpen] = useState(false);
   const [currentSessionId, setCurrentSessionId] = useState<string>(() => Date.now().toString());
   const [sessionMessages, setSessionMessages] = useState<{ role: 'user' | 'bot'; content: string }[]>([
@@ -18,14 +16,16 @@ export function Chatbot() {
   const [deleteConfirm, setDeleteConfirm] = useState<string | 'all' | null>(null);
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
-  const [user, setUser] = useState<User | null>(null);
+  const [user, setUser] = useState<LocalUser | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
-      setUser(currentUser);
-    });
-    return () => unsubscribe();
+    const checkUser = () => {
+      setUser(localDb.getUser());
+    };
+    checkUser();
+    window.addEventListener('storage', checkUser);
+    return () => window.removeEventListener('storage', checkUser);
   }, []);
 
   useEffect(() => {
@@ -34,29 +34,17 @@ export function Chatbot() {
       return;
     }
 
-    const q = query(
-      collection(db, `users/${user.uid}/chats`),
-      orderBy('createdAt', 'asc')
-    );
+    const loadChats = () => {
+      const chats = localDb.getChats().map(c => ({
+        ...c,
+        createdAt: new Date(c.createdAt)
+      }));
+      setHistoryMessages(chats);
+    };
 
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const loadedMessages = snapshot.docs.map(doc => {
-        const data = doc.data();
-        return { 
-          id: doc.id,
-          role: data.role as 'user' | 'bot', 
-          content: data.content,
-          sessionId: data.sessionId || 'legacy',
-          createdAt: data.createdAt?.toDate() || new Date()
-        };
-      });
-      
-      setHistoryMessages(loadedMessages);
-    }, (error) => {
-      console.error("Error loading messages:", error);
-    });
-
-    return () => unsubscribe();
+    loadChats();
+    window.addEventListener('storage', loadChats);
+    return () => window.removeEventListener('storage', loadChats);
   }, [user]);
 
   const chatSessions = useMemo(() => {
@@ -103,29 +91,25 @@ export function Chatbot() {
     setSessionMessages(prev => [...prev, { role: 'user', content: userMessage }]);
     
     if (user) {
-      try {
-        if (isFirstMessage) {
-          // Verify if the initial message is already in history for this session
-          const hasInitialMsg = historyMessages.some(m => m.sessionId === currentSessionId && m.role === 'bot');
-          if (!hasInitialMsg) {
-            await addDoc(collection(db, `users/${user.uid}/chats`), {
-              role: 'bot',
-              content: sessionMessages[0].content,
-              createdAt: serverTimestamp(),
-              sessionId: currentSessionId
-            });
-          }
+      if (isFirstMessage) {
+        // Verify if the initial message is already in history for this session
+        const hasInitialMsg = historyMessages.some(m => m.sessionId === currentSessionId && m.role === 'bot');
+        if (!hasInitialMsg) {
+          const savedBot = localDb.saveChat({
+            role: 'bot',
+            content: sessionMessages[0].content,
+            sessionId: currentSessionId
+          });
+          setHistoryMessages(prev => [...prev, { ...savedBot, createdAt: new Date(savedBot.createdAt) }]);
         }
-
-        await addDoc(collection(db, `users/${user.uid}/chats`), {
-          role: 'user',
-          content: userMessage,
-          createdAt: serverTimestamp(),
-          sessionId: currentSessionId
-        });
-      } catch (error) {
-        console.error("Error saving user message:", error);
       }
+
+      const savedUser = localDb.saveChat({
+        role: 'user',
+        content: userMessage,
+        sessionId: currentSessionId
+      });
+      setHistoryMessages(prev => [...prev, { ...savedUser, createdAt: new Date(savedUser.createdAt) }]);
     }
 
     setIsLoading(true);
@@ -151,16 +135,12 @@ export function Chatbot() {
       setSessionMessages(prev => [...prev, { role: 'bot', content: botResponse }]);
       
       if (user) {
-        try {
-          await addDoc(collection(db, `users/${user.uid}/chats`), {
-            role: 'bot',
-            content: botResponse,
-            createdAt: serverTimestamp(),
-            sessionId: currentSessionId
-          });
-        } catch (error) {
-          console.error("Error saving bot message:", error);
-        }
+        const savedBot = localDb.saveChat({
+          role: 'bot',
+          content: botResponse,
+          sessionId: currentSessionId
+        });
+        setHistoryMessages(prev => [...prev, { ...savedBot, createdAt: new Date(savedBot.createdAt) }]);
       }
     } catch (error) {
       console.error('Error calling Gemini:', error);
@@ -175,7 +155,7 @@ export function Chatbot() {
       {/* Botón flotante */}
       <button
         onClick={() => setIsOpen(true)}
-        className={`fixed bottom-6 left-6 p-4 rounded-full bg-gradient-to-br from-indigo-900 via-purple-800 to-blue-900 border border-purple-400/50 shadow-[0_0_20px_rgba(168,85,247,0.5)] hover:shadow-[0_0_35px_rgba(168,85,247,0.8)] hover:scale-110 transition-all duration-300 z-40 group ${isOpen ? 'scale-0 opacity-0' : 'scale-100 opacity-100'}`}
+        className={`fixed bottom-6 left-6 p-4 rounded-full bg-gradient-to-br from-indigo-900 via-purple-800 to-blue-900 border border-purple-400/50 shadow-[0_0_20px_rgba(168,85,247,0.5)] hover:shadow-[0_0_35px_rgba(168,85,247,0.8)] hover:scale-110 transition-all duration-300 z-40 group ${isOpen ? 'scale-0 opacity-0' : 'scale-100 opacity-100'} ${hideOnMobile ? 'hidden sm:block' : 'block'}`}
       >
         <div className="absolute inset-0 rounded-full bg-[radial-gradient(circle_at_30%_30%,rgba(255,255,255,0.2),transparent)] pointer-events-none" />
         <Sparkles className="text-purple-200 group-hover:text-white transition-colors relative z-10" size={28} />
@@ -189,7 +169,7 @@ export function Chatbot() {
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: 20, scale: 0.95 }}
             transition={{ duration: 0.2 }}
-            className="fixed bottom-6 left-6 w-[350px] h-[500px] max-h-[80vh] bg-gradient-to-b from-[#09090e] to-[#12121c] border border-purple-500/30 rounded-2xl shadow-[0_0_40px_rgba(0,0,0,0.8)] flex flex-col z-50 overflow-hidden backdrop-blur-xl"
+            className="fixed inset-0 w-full h-[100dvh] sm:inset-auto sm:bottom-6 sm:left-6 sm:w-[350px] sm:h-[500px] sm:max-h-[80vh] bg-gradient-to-b from-[#09090e] to-[#12121c] sm:border border-purple-500/30 sm:rounded-2xl shadow-[0_0_40px_rgba(0,0,0,0.8)] flex flex-col z-50 overflow-hidden backdrop-blur-xl"
           >
             {/* Header */}
             <div className="flex items-center justify-between p-4 border-b border-purple-500/20 bg-black/40 backdrop-blur-md relative overflow-hidden">
@@ -251,35 +231,22 @@ export function Chatbot() {
                           Cancelar
                         </button>
                         <button
-                          onClick={async () => {
+                          onClick={() => {
                             if (deleteConfirm === 'all') {
                               if (!user) return;
-                              try {
-                                const deletePromises = historyMessages.map(msg => 
-                                  deleteDoc(doc(db, `users/${user.uid}/chats`, msg.id))
-                                );
-                                await Promise.all(deletePromises);
-                                setSessionMessages([{ role: 'bot', content: '¡Hola! Soy tu asistente espacial. ¿Qué quieres saber sobre el sistema solar?' }]);
-                                setCurrentSessionId(Date.now().toString());
-                              } catch (error) {
-                                console.error("Error deleting all chats:", error);
-                              }
+                              localDb.deleteAllChats();
+                              setHistoryMessages([]);
+                              setSessionMessages([{ role: 'bot', content: '¡Hola! Soy tu asistente espacial. ¿Qué quieres saber sobre el sistema solar?' }]);
+                              setCurrentSessionId(Date.now().toString());
                             } else {
                               if (!user) return;
-                              try {
-                                const messagesToDelete = historyMessages.filter(m => m.sessionId === deleteConfirm);
-                                const deletePromises = messagesToDelete.map(msg => 
-                                  deleteDoc(doc(db, `users/${user.uid}/chats`, msg.id))
-                                );
-                                await Promise.all(deletePromises);
-                                
-                                if (currentSessionId === deleteConfirm) {
-                                  const newSessionId = Date.now().toString();
-                                  setCurrentSessionId(newSessionId);
-                                  setSessionMessages([{ role: 'bot', content: '¡Hola! Soy tu asistente espacial. ¿Qué quieres saber sobre el sistema solar?' }]);
-                                }
-                              } catch (error) {
-                                console.error("Error deleting chat:", error);
+                              localDb.deleteSession(deleteConfirm);
+                              setHistoryMessages(prev => prev.filter(m => m.sessionId !== deleteConfirm));
+                              
+                              if (currentSessionId === deleteConfirm) {
+                                const newSessionId = Date.now().toString();
+                                setCurrentSessionId(newSessionId);
+                                setSessionMessages([{ role: 'bot', content: '¡Hola! Soy tu asistente espacial. ¿Qué quieres saber sobre el sistema solar?' }]);
                               }
                             }
                             setDeleteConfirm(null);

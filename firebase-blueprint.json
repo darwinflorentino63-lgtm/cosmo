@@ -1,38 +1,41 @@
 {
   "entities": {
-    "User": {
-      "title": "User",
-      "description": "A user of the application",
-      "type": "object",
-      "properties": {
-        "uid": { "type": "string" },
-        "email": { "type": "string", "format": "email" },
-        "displayName": { "type": "string" },
-        "photoURL": { "type": "string" },
-        "createdAt": { "type": "string", "format": "date-time" }
-      },
-      "required": ["uid", "email", "createdAt"]
-    },
     "ChatMessage": {
       "title": "ChatMessage",
-      "description": "A chat message sent by the user or the bot",
+      "description": "A message in a chat session",
       "type": "object",
       "properties": {
-        "role": { "type": "string", "enum": ["user", "bot"] },
-        "content": { "type": "string" },
-        "createdAt": { "type": "string", "format": "date-time" }
+        "role": {
+          "type": "string",
+          "enum": ["user", "bot"],
+          "description": "The role of the message sender"
+        },
+        "content": {
+          "type": "string",
+          "description": "The content of the message"
+        },
+        "sessionId": {
+          "type": "string",
+          "description": "The ID of the chat session"
+        },
+        "createdAt": {
+          "type": "number",
+          "description": "Timestamp of when the message was created"
+        },
+        "userId": {
+          "type": "string",
+          "description": "The ID of the user who owns this chat"
+        }
       },
-      "required": ["role", "content", "createdAt"]
+      "required": ["role", "content", "sessionId", "createdAt", "userId"]
     }
   },
   "firestore": {
-    "users/{userId}": {
-      "schema": { "$ref": "#/entities/User" },
-      "description": "Stores user profiles."
-    },
-    "users/{userId}/chats/{chatId}": {
-      "schema": { "$ref": "#/entities/ChatMessage" },
-      "description": "Stores chat history for a user."
+    "/users/{userId}/chats/{chatId}": {
+      "schema": {
+        "$ref": "#/entities/ChatMessage"
+      },
+      "description": "Chat messages for a specific user"
     }
   }
 }

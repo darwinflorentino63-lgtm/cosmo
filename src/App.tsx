@@ -10,9 +10,9 @@ import { Chatbot } from './components/Chatbot';
 import { SpaceNews } from './components/SpaceNews';
 import { SiteInfo } from './components/SiteInfo';
 import { PrivacyPolicyModal } from './components/PrivacyPolicyModal';
-import { auth, googleProvider, db } from './firebase';
-import { signInWithPopup, signOut, onAuthStateChanged, User } from 'firebase/auth';
-import { doc, setDoc, getDoc, serverTimestamp } from 'firebase/firestore';
+import { localDb, LocalUser } from './localDb';
+import { signInWithPopup, signOut } from 'firebase/auth';
+import { auth, provider } from './firebase';
 
 // Definición de los datos de los planetas
 const PLANETS = [
@@ -166,7 +166,7 @@ type PlanetInfo = {
 export default function App() {
   const [selectedPlanet, setSelectedPlanet] = useState<PlanetInfo | null>(null);
   const [zoom, setZoom] = useState(1);
-  const [user, setUser] = useState<User | null>(null);
+  const [user, setUser] = useState<LocalUser | null>(null);
   const [isNewsOpen, setIsNewsOpen] = useState(false);
   const [isSiteInfoOpen, setIsSiteInfoOpen] = useState(false);
   const [showPrivacyPolicy, setShowPrivacyPolicy] = useState(false);
@@ -178,6 +178,10 @@ export default function App() {
     if (!hasAcceptedPolicy) {
       setShowPrivacyPolicy(true);
     }
+
+    // Load user from local database
+    const currentUser = localDb.getUser();
+    setUser(currentUser);
   }, []);
 
   const handleAcceptPolicy = () => {
@@ -185,47 +189,28 @@ export default function App() {
     setShowPrivacyPolicy(false);
   };
 
-  useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
-      setUser(currentUser);
-      if (currentUser) {
-        // Save user profile to Firestore
-        try {
-          const userRef = doc(db, 'users', currentUser.uid);
-          const userSnap = await getDoc(userRef);
-          
-          if (!userSnap.exists()) {
-            const userData: any = {
-              uid: currentUser.uid,
-              email: currentUser.email || '',
-              createdAt: serverTimestamp()
-            };
-            if (currentUser.displayName) userData.displayName = currentUser.displayName.substring(0, 100);
-            if (currentUser.photoURL) userData.photoURL = currentUser.photoURL.substring(0, 2048);
-            
-            await setDoc(userRef, userData);
-          }
-        } catch (error) {
-          console.error("Error saving user profile:", error);
-        }
-      }
-    });
-    return () => unsubscribe();
-  }, []);
-
   const handleLogin = async () => {
     try {
-      await signInWithPopup(auth, googleProvider);
+      const result = await signInWithPopup(auth, provider);
+      const newUser: LocalUser = { 
+        uid: result.user.uid, 
+        displayName: result.user.displayName || 'Explorador Espacial',
+        photoURL: result.user.photoURL || undefined
+      };
+      localDb.setUser(newUser);
+      setUser(newUser);
     } catch (error) {
-      console.error("Error signing in:", error);
+      console.error("Error al iniciar sesión:", error);
     }
   };
 
   const handleLogout = async () => {
     try {
       await signOut(auth);
+      localDb.setUser(null);
+      setUser(null);
     } catch (error) {
-      console.error("Error signing out:", error);
+      console.error("Error al cerrar sesión:", error);
     }
   };
 
@@ -249,8 +234,8 @@ export default function App() {
       <Starfield />
 
       {/* Header & Logo */}
-      <header className="absolute top-0 left-0 w-full px-6 pt-3 pb-6 z-20 pointer-events-none flex items-center justify-between">
-        <div className="flex items-center gap-4">
+      <header className="absolute top-0 left-0 w-full px-4 sm:px-6 pt-2 pb-2 z-20 pointer-events-none flex items-center justify-between">
+        <div className="flex items-center gap-4 -mt-2">
           {/* Logo Geométrico */}
           <div className="relative flex items-center justify-center w-10 h-10">
             <div className="absolute w-8 h-8 border-[1.5px] border-white/20 rounded-full" />
@@ -623,7 +608,7 @@ export default function App() {
       {/* New Extra Button */}
       <button
         onClick={() => setIsNewsOpen(true)}
-        className="fixed bottom-[100px] left-6 sm:bottom-6 sm:left-[100px] p-4 rounded-full bg-gradient-to-br from-blue-900 via-indigo-800 to-purple-900 border border-blue-400/50 shadow-[0_0_20px_rgba(59,130,246,0.5)] hover:shadow-[0_0_35px_rgba(59,130,246,0.8)] hover:scale-110 transition-all duration-300 z-40 group"
+        className={`fixed bottom-[100px] left-6 sm:bottom-6 sm:left-[100px] p-4 rounded-full bg-gradient-to-br from-blue-900 via-indigo-800 to-purple-900 border border-blue-400/50 shadow-[0_0_20px_rgba(59,130,246,0.5)] hover:shadow-[0_0_35px_rgba(59,130,246,0.8)] hover:scale-110 transition-all duration-300 z-40 group ${selectedPlanet ? 'hidden sm:block' : 'block'}`}
         title="Noticias Espaciales"
       >
         <div className="absolute inset-0 rounded-full bg-[radial-gradient(circle_at_30%_30%,rgba(255,255,255,0.2),transparent)] pointer-events-none" />
@@ -640,7 +625,7 @@ export default function App() {
       <PrivacyPolicyModal isOpen={showPrivacyPolicy} onAccept={handleAcceptPolicy} />
 
       {/* Chatbot */}
-      <Chatbot />
+      <Chatbot hideOnMobile={!!selectedPlanet} />
     </div>
   );
 }
